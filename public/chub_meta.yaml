@@ -48,3 +48,5 @@ is_anonymous: false
 ratings_disabled: true
 
 # deploy trigger
+github_path: 'https://github.com/PRDWN1/dungeon-master-stage'
+
