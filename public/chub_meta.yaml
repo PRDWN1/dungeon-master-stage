@@ -46,3 +46,5 @@ state_schema:
 is_anonymous: false
 
 ratings_disabled: true
+
+# deploy trigger
