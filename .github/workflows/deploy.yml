@@ -28,7 +28,7 @@ jobs:
       - name: Enable Yarn
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
           corepack enable
           corepack prepare yarn@1.22.22 --activate
           node --version
@@ -39,8 +39,11 @@ jobs:
         env:
           CHUB_AUTH_TOKEN: ${{ secrets.CHUB_AUTH_TOKEN }}
         run: |
-          set -euo pipefail
-          test -n "$CHUB_AUTH_TOKEN" || { echo "ERROR: CHUB_AUTH_TOKEN is missing."; exit 1; }
+          set -e
+          if [ -z "$CHUB_AUTH_TOKEN" ]; then
+            echo "ERROR: CHUB_AUTH_TOKEN is missing."
+            exit 1
+          fi
           echo "CHUB_AUTH_TOKEN is configured."
 
       - name: Install dependencies
@@ -54,9 +57,11 @@ jobs:
       - name: Create build archive
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
           rm -f build.zip
-          (cd dist && zip -r ../build.zip .)
+          cd dist
+          zip -r ../build.zip .
+          cd ..
           test -s build.zip
           echo "build.zip created."
 
@@ -64,33 +69,28 @@ jobs:
         shell: bash
         env:
           CHUB_AUTH_TOKEN: ${{ secrets.CHUB_AUTH_TOKEN }}
-          SECRET_STAGE_ID: ${{ secrets.STAGE_ID }}
+          STAGE_ID_SECRET: ${{ secrets.STAGE_ID }}
         run: |
-          set -euo pipefail
+          set -e
 
-          STAGE_ID="${SECRET_STAGE_ID:-}"
+          STAGE_ID="$STAGE_ID_SECRET"
 
           if [ -n "$STAGE_ID" ]; then
             echo "Using STAGE_ID from GitHub Secrets."
-          fi
-
-          if [ -z "$STAGE_ID" ] && [ -f public/chub_meta.yaml ]; then
-            STAGE_ID="$(awk -F: '/^extension_id:/ {v=$0; sub(/^[^:]*:[[:space:]]*/, "", v); gsub(/^[[:space:]'\''"]+|[[:space:]'\''"]+$/, "", v); print v; exit}' public/chub_meta.yaml)"
-            if [ -n "$STAGE_ID" ]; then
-              echo "Using extension_id from public/chub_meta.yaml."
-            fi
-          fi
-
-          if [ -z "$STAGE_ID" ]; then
-            echo "No existing Stage ID found."
+          else
+            echo "No STAGE_ID secret found."
             echo "Creating a new Stage in Chub..."
 
-            RESPONSE_FILE="$(mktemp)"
-            HTTP_STATUS="$(curl -sS -o "$RESPONSE_FILE" -w "%{http_code}" \
-              -H "CH-API-KEY: $CHUB_AUTH_TOKEN" \
-              -H "Content-Type: application/json" \
-              -X POST \
-              --data '{"name":"Dungeon Master Engine"}' \
-              "https://api.chub.ai/extensions")"
+            rm -f creation.json
+
+            HTTP_STATUS=$(curl -sS               -o creation.json               -w "%{http_code}"               -H "CH-API-KEY: $CHUB_AUTH_TOKEN"               -H "Content-Type: application/json"               -X POST               --data "{\"name\":\"Dungeon Master Engine\"}"               "https://api.chub.ai/extensions")
 
             echo "HTTP_STATUS:$HTTP_STATUS"
+            echo "CHUB API RESPONSE:"
+            cat creation.json
+            echo
+
+            if [[ "$HTTP_STATUS" != 2* ]]; then
+              echo "ERROR: Chub Stage creation request failed."
+              exit 5
+            fi
