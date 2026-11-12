@@ -1,14 +1,16 @@
-name: Deploy Built Stage
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 
-on:
+name: Deploy Dungeon Master Stage
+
+"on":
   push:
     branches:
       - main
       - master
+  workflow_dispatch:
 
 permissions:
-  contents: write
-  issues: read
+  contents: read
 
 jobs:
   build-and-upload:
@@ -17,8 +19,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -26,131 +26,71 @@ jobs:
           node-version: "21.7.1"
 
       - name: Enable Yarn
+        shell: bash
         run: |
+          set -e
           corepack enable
           corepack prepare yarn@1.22.22 --activate
-          node -v
-          yarn -v
+          node --version
+          yarn --version
 
-      - name: Confirm CHUB_AUTH_TOKEN
+      - name: Check required secret
+        shell: bash
         env:
           CHUB_AUTH_TOKEN: ${{ secrets.CHUB_AUTH_TOKEN }}
         run: |
+          set -e
           if [ -z "$CHUB_AUTH_TOKEN" ]; then
-            echo "ERROR: CHUB_AUTH_TOKEN is not configured."
+            echo "ERROR: CHUB_AUTH_TOKEN is missing."
             exit 1
           fi
+          echo "CHUB_AUTH_TOKEN is configured."
 
-          echo "CHUB_AUTH_TOKEN exists."
+      - name: Install dependencies
+        shell: bash
+        run: yarn install --frozen-lockfile
 
-      - name: Get or create Stage ID
+      - name: Build Stage
+        shell: bash
+        run: yarn build
+
+      - name: Create build archive
+        shell: bash
+        run: |
+          set -e
+          rm -f build.zip
+          cd dist
+          zip -r ../build.zip .
+          cd ..
+          test -s build.zip
+          echo "build.zip created."
+
+      - name: Resolve Stage ID
+        shell: bash
         env:
           CHUB_AUTH_TOKEN: ${{ secrets.CHUB_AUTH_TOKEN }}
-          STAGE_ID_SECRET: ${{ secrets.STAGE_ID }}
+          SECRET_STAGE_ID: ${{ secrets.STAGE_ID }}
         run: |
           set -e
 
-          mkdir -p public
-          touch public/chub_meta.yaml
+          STAGE_ID=""
 
-          STAGE_ID="$STAGE_ID_SECRET"
-
-          if [ -z "$STAGE_ID" ]; then
-            STAGE_ID=$(grep '^extension_id:' public/chub_meta.yaml | cut -d ':' -f2- | tr -d " '\"" || true)
+          if [ -n "$SECRET_STAGE_ID" ]; then
+            STAGE_ID="$SECRET_STAGE_ID"
+            echo "Using STAGE_ID from GitHub Secrets."
+          elif [ -f public/chub_meta.yaml ]; then
+            STAGE_ID="$(sed -n "s/^extension_id:[[:space:]]*['\"]\{0,1\}\([^'\"]*\)['\"]\{0,1\}[[:space:]]*$/\1/p" public/chub_meta.yaml | head -n 1)"
+            if [ -n "$STAGE_ID" ]; then
+              echo "Using extension_id from public/chub_meta.yaml."
+            fi
           fi
 
           if [ -z "$STAGE_ID" ]; then
             echo "No existing Stage ID found."
             echo "Creating a new Stage in Chub..."
 
-            HTTP_STATUS=$(curl -sS \
-              -o creation.json \
-              -w "%{http_code}" \
-              -H "CH-API-KEY: $CHUB_AUTH_TOKEN" \
-              -H "Content-Type: application/json" \
-              --request POST \
-              --data "{\"name\":\"${{ github.event.repository.name }}\"}" \
-              "https://api.chub.ai/extensions")
+            RESPONSE_FILE="$(mktemp)"
+
+            HTTP_STATUS="$(curl -sS               -o "$RESPONSE_FILE"               -w "%{http_code}"               -H "CH-API-KEY: $CHUB_AUTH_TOKEN"               -H "Content-Type: application/json"               -X POST               --data '{"name":"Dungeon Master Engine"}'               "https://api.chub.ai/extensions")"
 
             echo "HTTP_STATUS:$HTTP_STATUS"
-
-            echo "CHUB API RESPONSE:"
-            head -c 1000 creation.json || true
-            echo ""
-
-            if [[ ! "$HTTP_STATUS" =~ ^2 ]]; then
-              echo "ERROR: Chub Stage creation request failed."
-              exit 5
-            fi
-
-            if ! jq -e . creation.json >/dev/null 2>&1; then
-              echo "ERROR: Chub returned a response that is not valid JSON."
-              exit 5
-            fi
-
-            STAGE_ID=$(jq -r '.id_v2 // empty' creation.json)
-
-            if [ -z "$STAGE_ID" ]; then
-              echo "ERROR: Chub response did not contain id_v2."
-              exit 1
-            fi
-
-            echo ""
-            echo "Stage created successfully."
-
-            echo "" >> public/chub_meta.yaml
-            echo "extension_id: '$STAGE_ID'" >> public/chub_meta.yaml
-          else
-            echo "Existing Stage ID found."
-          fi
-
-          if ! grep -q '^github_path:' public/chub_meta.yaml; then
-            echo "" >> public/chub_meta.yaml
-            echo "github_path: 'https://github.com/${{ github.repository }}'" >> public/chub_meta.yaml
-          fi
-
-          echo "STAGE_ID=$STAGE_ID" >> "$GITHUB_ENV"
-
-          if ! git diff --quiet -- public/chub_meta.yaml; then
-            git config --local user.email "action@github.com"
-            git config --local user.name "GitHub Action"
-
-            git add public/chub_meta.yaml
-            git commit -m "Save Chub Stage metadata"
-
-            git push origin HEAD:${GITHUB_REF_NAME}
-          fi
-
-      - name: Install dependencies
-        run: yarn install
-
-      - name: Build Stage
-        run: yarn build
-
-      - name: Create build archive
-        run: |
-          cd dist
-          zip -r ../build.zip .
-          cd ..
-
-      - name: Upload Stage to Chub
-        env:
-          CHUB_AUTH_TOKEN: ${{ secrets.CHUB_AUTH_TOKEN }}
-        run: |
-          HTTP_STATUS=$(curl -sS \
-            -o upload_response.txt \
-            -w "%{http_code}" \
-            -H "CH-API-KEY: $CHUB_AUTH_TOKEN" \
-            -F "file=@build.zip" \
-            "https://api.chub.ai/extension/${STAGE_ID}/upload")
-
-          echo "UPLOAD_HTTP_STATUS:$HTTP_STATUS"
-
-          if [[ ! "$HTTP_STATUS" =~ ^2 ]]; then
-            echo "ERROR: Stage upload failed."
-            echo "CHUB RESPONSE:"
-            cat upload_response.txt || true
-            exit 1
-          fi
-
-          echo "Stage uploaded successfully."
