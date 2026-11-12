@@ -16,6 +16,10 @@ jobs:
   build-and-upload:
     runs-on: ubuntu-latest
 
+    env:
+      CHUB_AUTH_TOKEN: ${{ secrets.CHUB_AUTH_TOKEN }}
+      STAGE_ID_SECRET: ${{ secrets.STAGE_ID }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -36,14 +40,9 @@ jobs:
 
       - name: Check CHUB_AUTH_TOKEN
         shell: bash
-        env:
-          CHUB_AUTH_TOKEN: ${{ secrets.CHUB_AUTH_TOKEN }}
         run: |
           set -e
-          if [ -z "$CHUB_AUTH_TOKEN" ]; then
-            echo "ERROR: CHUB_AUTH_TOKEN is missing."
-            exit 1
-          fi
+          test -n "$CHUB_AUTH_TOKEN"
           echo "CHUB_AUTH_TOKEN is configured."
 
       - name: Install dependencies
@@ -65,32 +64,45 @@ jobs:
           test -s build.zip
           echo "build.zip created."
 
-      - name: Resolve or create Stage ID
+      - name: Use existing Stage ID
+        if: ${{ env.STAGE_ID_SECRET != '' }}
         shell: bash
-        env:
-          CHUB_AUTH_TOKEN: ${{ secrets.CHUB_AUTH_TOKEN }}
-          STAGE_ID_SECRET: ${{ secrets.STAGE_ID }}
         run: |
           set -e
+          echo "Using STAGE_ID from GitHub Secrets."
+          echo "STAGE_ID=$STAGE_ID_SECRET" >> "$GITHUB_ENV"
 
-          STAGE_ID="$STAGE_ID_SECRET"
+      - name: Create new Stage
+        if: ${{ env.STAGE_ID_SECRET == '' }}
+        shell: bash
+        run: |
+          set -e
+          echo "No STAGE_ID secret found."
+          echo "Creating a new Stage in Chub..."
 
-          if [ -n "$STAGE_ID" ]; then
-            echo "Using STAGE_ID from GitHub Secrets."
-          else
-            echo "No STAGE_ID secret found."
-            echo "Creating a new Stage in Chub..."
+          rm -f creation.json
 
-            rm -f creation.json
+          curl --fail-with-body -sS             -H "CH-API-KEY: $CHUB_AUTH_TOKEN"             -H "Content-Type: application/json"             -X POST             --data '{"name":"Dungeon Master Engine"}'             "https://api.chub.ai/extensions"             -o creation.json || { echo "CHUB API RESPONSE:"; cat creation.json 2>/dev/null || true; exit 5; }
 
-            HTTP_STATUS=$(curl -sS               -o creation.json               -w "%{http_code}"               -H "CH-API-KEY: $CHUB_AUTH_TOKEN"               -H "Content-Type: application/json"               -X POST               --data "{\"name\":\"Dungeon Master Engine\"}"               "https://api.chub.ai/extensions")
+          echo "CHUB API RESPONSE:"
+          cat creation.json
+          echo
 
-            echo "HTTP_STATUS:$HTTP_STATUS"
-            echo "CHUB API RESPONSE:"
-            cat creation.json
-            echo
+          STAGE_ID="$(python3 -c 'import json; d=json.load(open("creation.json", encoding="utf-8")); print(d.get("id_v2") or d.get("id") or "")')"
+          test -n "$STAGE_ID"
+          echo "STAGE_ID=$STAGE_ID" >> "$GITHUB_ENV"
+          echo "Stage ID created."
 
-            if [[ "$HTTP_STATUS" != 2* ]]; then
-              echo "ERROR: Chub Stage creation request failed."
-              exit 5
-            fi
+      - name: Upload Stage to Chub
+        shell: bash
+        run: |
+          set -e
+          test -n "$STAGE_ID"
+          rm -f upload_response.txt
+
+          curl --fail-with-body -sS             -H "CH-API-KEY: $CHUB_AUTH_TOKEN"             -F "file=@build.zip"             "https://api.chub.ai/extension/$STAGE_ID/upload"             -o upload_response.txt || { echo "CHUB UPLOAD RESPONSE:"; cat upload_response.txt 2>/dev/null || true; exit 8; }
+
+          echo "CHUB UPLOAD RESPONSE:"
+          cat upload_response.txt
+          echo
+          echo "Stage uploaded successfully."
