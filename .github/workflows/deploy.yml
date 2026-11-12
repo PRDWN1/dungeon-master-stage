@@ -28,22 +28,19 @@ jobs:
       - name: Enable Yarn
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           corepack enable
           corepack prepare yarn@1.22.22 --activate
           node --version
           yarn --version
 
-      - name: Check required secret
+      - name: Check CHUB_AUTH_TOKEN
         shell: bash
         env:
           CHUB_AUTH_TOKEN: ${{ secrets.CHUB_AUTH_TOKEN }}
         run: |
-          set -e
-          if [ -z "$CHUB_AUTH_TOKEN" ]; then
-            echo "ERROR: CHUB_AUTH_TOKEN is missing."
-            exit 1
-          fi
+          set -euo pipefail
+          test -n "$CHUB_AUTH_TOKEN" || { echo "ERROR: CHUB_AUTH_TOKEN is missing."; exit 1; }
           echo "CHUB_AUTH_TOKEN is configured."
 
       - name: Install dependencies
@@ -57,29 +54,28 @@ jobs:
       - name: Create build archive
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           rm -f build.zip
-          cd dist
-          zip -r ../build.zip .
-          cd ..
+          (cd dist && zip -r ../build.zip .)
           test -s build.zip
           echo "build.zip created."
 
-      - name: Resolve Stage ID
+      - name: Resolve or create Stage ID
         shell: bash
         env:
           CHUB_AUTH_TOKEN: ${{ secrets.CHUB_AUTH_TOKEN }}
           SECRET_STAGE_ID: ${{ secrets.STAGE_ID }}
         run: |
-          set -e
+          set -euo pipefail
 
-          STAGE_ID=""
+          STAGE_ID="${SECRET_STAGE_ID:-}"
 
-          if [ -n "$SECRET_STAGE_ID" ]; then
-            STAGE_ID="$SECRET_STAGE_ID"
+          if [ -n "$STAGE_ID" ]; then
             echo "Using STAGE_ID from GitHub Secrets."
-          elif [ -f public/chub_meta.yaml ]; then
-            STAGE_ID="$(sed -n "s/^extension_id:[[:space:]]*['\"]\{0,1\}\([^'\"]*\)['\"]\{0,1\}[[:space:]]*$/\1/p" public/chub_meta.yaml | head -n 1)"
+          fi
+
+          if [ -z "$STAGE_ID" ] && [ -f public/chub_meta.yaml ]; then
+            STAGE_ID="$(awk -F: '/^extension_id:/ {v=$0; sub(/^[^:]*:[[:space:]]*/, "", v); gsub(/^[[:space:]'\''"]+|[[:space:]'\''"]+$/, "", v); print v; exit}' public/chub_meta.yaml)"
             if [ -n "$STAGE_ID" ]; then
               echo "Using extension_id from public/chub_meta.yaml."
             fi
@@ -90,7 +86,11 @@ jobs:
             echo "Creating a new Stage in Chub..."
 
             RESPONSE_FILE="$(mktemp)"
-
-            HTTP_STATUS="$(curl -sS               -o "$RESPONSE_FILE"               -w "%{http_code}"               -H "CH-API-KEY: $CHUB_AUTH_TOKEN"               -H "Content-Type: application/json"               -X POST               --data '{"name":"Dungeon Master Engine"}'               "https://api.chub.ai/extensions")"
+            HTTP_STATUS="$(curl -sS -o "$RESPONSE_FILE" -w "%{http_code}" \
+              -H "CH-API-KEY: $CHUB_AUTH_TOKEN" \
+              -H "Content-Type: application/json" \
+              -X POST \
+              --data '{"name":"Dungeon Master Engine"}' \
+              "https://api.chub.ai/extensions")"
 
             echo "HTTP_STATUS:$HTTP_STATUS"
