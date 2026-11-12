@@ -12,41 +12,54 @@ tags:
   - "Dungeon"
   - "Game Engine"
 
-config_schema:
-  type: object
-  properties: {}
-
 state_schema:
+
   init:
     type: object
     properties:
       seed:
         type: integer
+
+  message:
+    type: object
+    properties:
+
       floor:
         type: integer
+
+      playerX:
+        type: integer
+
+      playerY:
+        type: integer
+
+      turn:
+        type: integer
+
       map:
         type: array
         items:
           type: string
 
-  message:
-    type: object
-    properties:
-      playerX:
-        type: integer
-      playerY:
-        type: integer
-      turn:
-        type: integer
+      currentRoom:
+        type: string
+
+      activeCreatureId:
+        type: string
+
+      activeTrapId:
+        type: string
 
   chat:
     type: object
-    properties: {}
+    properties:
+      visited:
+        type: array
+        items:
+          type: string
 
 is_anonymous: false
 
 ratings_disabled: true
 
-# deploy trigger
 github_path: 'https://github.com/PRDWN1/dungeon-master-stage'
-
