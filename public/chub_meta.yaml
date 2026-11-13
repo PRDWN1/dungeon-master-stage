@@ -1,6 +1,6 @@
 project_name: "Dungeon Master Engine"
 
-tagline: "Persistent seeded dungeon engine for Chub roleplay."
+tagline: "Persistent seeded dungeon state engine for Chub roleplay."
 
 visibility: "PRIVATE"
 
@@ -12,8 +12,16 @@ tags:
   - "Dungeon"
   - "Game Engine"
 
-state_schema:
+config_schema:
+  type: object
+  properties:
+    debug:
+      title: "Debug mode"
+      description: "Reserved for development diagnostics."
+      type: boolean
+      default: false
 
+state_schema:
   init:
     type: object
     properties:
@@ -23,43 +31,34 @@ state_schema:
   message:
     type: object
     properties:
-
+      version:
+        type: integer
+      seed:
+        type: integer
       floor:
         type: integer
-
-      playerX:
-        type: integer
-
-      playerY:
-        type: integer
-
       turn:
         type: integer
-
+      playerX:
+        type: integer
+      playerY:
+        type: integer
       map:
         type: array
         items:
           type: string
-
-      currentRoom:
-        type: string
-
-      activeCreatureId:
-        type: string
-
-      activeTrapId:
-        type: string
+      lastUserMessage:
+        type:
+          - string
+          - "null"
+      lastMapAccepted:
+        type: boolean
 
   chat:
     type: object
-    properties:
-      visited:
-        type: array
-        items:
-          type: string
+    properties: {}
 
 is_anonymous: false
-
 ratings_disabled: true
 
 github_path: 'https://github.com/PRDWN1/dungeon-master-stage'
